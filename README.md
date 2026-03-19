@@ -69,9 +69,8 @@ with and without APOBEC-mutagenesis. Additionally, the expression patterns of th
 analysed. Count files produced by Rsubread are required as input, as well as the subtype annotations of all    
 samples and the SBS2 and SBS13 status in *ETV6::RUNX1*-positive samples.   
 
-The approach of Li *et al.* (2025) is followed to explore additional expression differences between    
-*ETV6::RUNX1*-positive samples with and without APOBEC-mutagenesis, refer to:    
-<https://doi.org/10.1038/s41467-025-56229-7>.
+The approach of Li *et al.* (2025) is followed to explore additional expression differences between *ETV6::RUNX1*-    
+positive samples with and without APOBEC-mutagenesis, refer to: <https://doi.org/10.1038/s41467-025-56229-7>.
 
 ### Script generateBamReadcountJobs.sh
 
