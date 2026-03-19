@@ -1,0 +1,1062 @@
+```{r setup, include=FALSE}
+### This file was automatically extracted from autoana.Rmd, which was
+### also used to produce the complete HTML file (see there for
+### details). Feel free to use it as the basis for your own analysis.
+### It's best to ignore any statements matching 'autoana'.  You may also
+### want to replace all autoana::cache({ _stuff_ }) with just _stuff_,
+### it's a mechanism to speed up things during development.  The 'meat'
+### of the script starts around the 'read10xlibs(...)'
+### I have put a fair amount of garbage collection ( `gc()`) calls 
+### in the code in a (possibly vain) attempt to keep memory usage down.
+
+#! NOTE: Change global parameters at lines 87-96
+#
+#  Execute this script via cmd-line with:
+#  R -e "rmarkdown::render(input='APOBEC-autoana.Rmd', 
+#  knit_root_dir='/hpc/pmc_kuiper/HypermutatedALL_project/RESULTS/scRNAseq', 
+#  output_format=rmarkdown::html_document(toc = TRUE, toc_depth = 6, 
+#  toc_float = list(collapsed=FALSE),  toc_collapsed = FALSE, code_folding='hide', 
+#  code_download=TRUE, embed_resources=TRUE, standalone=TRUE, keep_md=TRUE), 
+#  output_dir='/hpc/pmc_kuiper/HypermutatedALL_project/RESULTS/scRNAseq', 
+#  output_file='APOBEC-ana.html', clean=FALSE)"
+
+
+### maybe dump core upon error (debugging/developing):
+coredumpdir <- Sys.getenv("coredumpdir")
+if ( coredumpdir != "" )
+  options(error=uuutils::traceback.dump.quit(dir=coredumpdir), 
+      show.error.messages=TRUE)
+### maybe allow caching (during development)
+options(autoana_cache=Sys.getenv("autoana_cache"))
+
+suppressMessages(library(rmarkdown))
+knitr::opts_knit$set(eval.after = "fig.cap")
+knitr::opts_chunk$set(echo = TRUE, 
+  error=FALSE,
+  fig.width=9,
+  fig.height=6,
+  message=FALSE,
+  warning=FALSE,
+  cache=FALSE, # we use autoana::cache for this
+  collapse=TRUE,  # put misc. outputs from one chunk in one block
+  tidy=TRUE, # tidies up the R code
+  tidy.opts=list(arrow=TRUE, 
+                 indent=2,
+                 width.cutoff = 80))
+```
+------------------------------------------------------------------------
+
+# Preface
+
+The analyses in this document were produced automatically with [the autoana
+package](https://bitbucket.org/princessmaximacenter/autoana).
+None of the parameters used here were optimized specifically for
+this dataset, so the analysis must be considered preliminary. The final 
+resulting Seurat object can, together with the R code contained in the current
+document, serve as a starting point for further explorations.
+
+# Preparation
+
+A number of R packages needs to be loaded and command line arguments /
+configuration parameters need to be parsed to know what to process and how.
+
+```{r prepare, include=TRUE}
+options(stringsAsFactors = FALSE, warn=1)
+library(xfun) # for caching
+library(autoana)
+library(kableExtra)
+library(SCutils)
+library(Seurat)
+library(checkmate)
+library(testthat)
+library(ggplot2)
+library(patchwork)
+library(ggExtra)
+library(ggthemes)
+library(ggpubr)
+library(celldex)
+library(SingleR)
+library(Polychrome)
+library(viridis)
+library(ape)
+library(uuutils)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+
+## get defaults from the package-defined R config file
+species <- "human"
+HumanPrimaryCellAtlas <- "/hpc/pmc_kuiper/References/HumanPrimaryCellAtlas/HumanPrimaryCellAtlasData-referenceCounts.Rdata" # db saved manually to avoid package version conflicts
+source(paste0(path.package("autoana"), "/config/generaldefaults.R"))
+source(paste0(path.package("autoana"), "/config/", species, ".R"))
+CFG$title <- "APOBEC"
+CFG$file <- "/hpc/pmc_kuiper/HypermutatedALL_project/RESULTS/scRNAseq/merged_filtered_feature_matrices_220724.Rda"
+CFG$min_txpts <- 100
+extraconfig <- ""
+cellsfile <- ""
+clustersfile <- ""
+
+# Check outputs
+expect_file(CFG$file)
+.expect_file_or_emptystring(extraconfig)
+.expect_file_or_emptystring(cellsfile)
+.expect_file_or_emptystring(clustersfile)
+
+cfg_save_file <- sprintf("%s-config.R", CFG$title)
+dput(x=CFG, file=cfg_save_file)
+
+```
+
+---
+title: `r CFG$title`
+output:
+  html_document:
+    theme: united
+    df_print: kable
+  pdf_document: default
+---
+
+<!-- Make more room for table of contents. 
+  -- Further document settings are specified 
+  -- in the call to render() in autoana.sh
+  -->
+
+```{css toc-content, echo = FALSE}
+.main-container {
+    max-width: 100%;
+}
+
+#TOC {
+  width: 200 px;
+  margin: 20px 0px 1px 0px;
+}
+
+.toc-content {
+  padding-left: 1px;
+  padding-right: 1px;
+}
+
+```
+
+## Inputs
+
+```{r info, include=TRUE}
+
+date <- as.character(Sys.time())
+script <- paste0(path.package("autoana"),"/scripts/autoana.Rmd")
+pkgversion <- as.character(packageVersion("autoana"))
+gitversion <- autoana::.gitversion()
+
+vals <- c(title= CFG$title,
+          file= unname(CFG$file),
+          species= species,
+          extraconfig= CFG$extraconfig,
+          cellsfile=CFG$cellsfile,
+          clustersfile=CFG$clustersfile,
+          `run date` = date,
+          operator = Sys.getenv('USER'),
+          script=script,
+          `package version`= pkgversion,
+          `git version`=gitversion)
+df <- data.frame(what=names(vals), value=unname(vals))
+
+kbl(df, 
+    caption="*Run-time information.*") %>% 
+    kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## Config
+
+Selected configuration parameters are shown here. The full
+configuration is available as `r cfg_save_file` should it be needed
+later.  For details on package version <a href="#session-info">  
+see Session Info </a>.
+
+```{r config}
+
+to_show <- c('min_cells', 
+  'min_features', 
+  'min_txpts', 
+  'max_txpts', 
+  'max_pct_mito', 
+  'max_pct_hemo', 
+  'ndims', 
+  'nngbs', 
+  'resolution', 
+  'celltyping_dataset', 
+  'celltyping_subset')
+
+df <- data.frame(what=to_show, 
+                  value=unname(unlist(sapply(to_show,
+                               function(name)CFG[[name]]))))
+kbl(df, 
+    caption="*Selected configuration parameters.*") %>% 
+    kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+# Reading data
+
+```{r read-data, include=TRUE}
+
+load(CFG$file)
+srat <- merged_lib_contents
+
+
+## if a cellsfile was given, keep only those cells:
+if ( cellsfile !="" ) {
+  cells <- right_cells(srat, file=cellsfile, contains_clusterids=FALSE)
+  srat <- subset(srat, cells=cells)
+}
+
+clusterids <- NULL
+if ( clustersfile !="" )
+  clusterids <- right_cells(srat, file=clustersfile, contains_clusterids=TRUE)
+
+## not all genes of the gene lists we use for e.g. deconfounding may 
+## be present so adjust the genelists, otherwise you get indexing errors:
+genelists <- lapply(genelists, function(l)intersect(l, rownames(srat)))
+
+## If you maintain a separate set of genelists for the SCT assay (see above),
+## also adjust those genelists accordingly!
+
+if( length(genelists$ribo) == 0) # happens if names don't match
+  stop("found no ribosomal genes, was the right genome used?")
+```
+
+# Distribution of transcript counts
+
+```{r counts-distrib, fig.cap = sprintf("*The distribution of counts in linear (left) and log10 (right) scale.  Red lines correspond to `CFG$min_txpts` (%d) and `CFG$max_txpts` (%d). The top and right margins show the distribution of `ncount_RNA` and `pct_mito`, respectively.*", CFG$min_txpts, CFG$max_txpts)}
+
+Idents(srat) <- CFG$title  # overrule any Idents that might be there
+
+v <- VlnPlot(srat, "nCount_RNA", 
+             cols=CFG$default_color, pt.size=0.8) & 
+      NoLegend() & 
+      ggplot2::labs(x=NULL, y="transcripts")
+
+lines <- seq(from = 0, to = CFG$max_txpts, by = 10000)
+hlines <- geom_hline(yintercept = lines, col = "grey", linetype=1, lwd=0.1)
+
+h_cnt_lims <- geom_hline(yintercept = c(CFG$min_txpts, CFG$max_txpts),
+                       col = "red",
+                       linetype=2,
+                       lwd=0.5)
+
+( v  + hlines + h_cnt_lims ) | 
+  (v + scale_y_continuous(trans='log10') + hlines + h_cnt_lims )
+```
+
+# Mitochondrial reads
+
+Cells with a high percentage mitochondrial transcripts may be degraded,
+because cytoplasmic transcripts are degraded more rapidly than
+mitochondrial transcripts (which are protected longer by the
+mitochondrial membranes). Be aware that intact cells of some celltypes
+may be naturally high in mitochondrial transcripts.
+
+```{r count-vs-mito, fig.cap=sprintf("*The distribution of mitochondrial percentage versus the number of transcripts. Red lines correspond to `CFG$min_txpts` and `CFG$max_txpts` and `CFG$max_pct_mito`(%d).*", CFG$max_pct_mito)}
+
+counts.vs.mito <- ggplot(srat@meta.data, 
+    aes(x = nCount_RNA, y = pct_mito, size=1)) +
+    geom_point(color = CFG$default_color, size=1) + 
+    scale_x_continuous(trans='log10') + 
+    NoLegend() + theme_pubr()
+
+cnt_lims <- geom_vline(xintercept = c(CFG$min_txpts, CFG$max_txpts),
+                         col = "red",
+                         linetype=2,
+                         lwd=0.5)
+
+mito_lim <- geom_hline(yintercept = c(CFG$max_pct_mito),
+                        col = "red",
+                        linetype=2,
+                        lwd=0.5)
+
+p <- counts.vs.mito + cnt_lims + mito_lim
+
+ggMarginal(p, size=8)
+
+```
+
+# Complexity and hemoglobin
+
+There is usually a 'lightly curved' relationship between the log(numbers)
+of genes expressed in a cell and the log(transcripts).  Highly
+specialized celltypes have relatively fewer genes than expected, and
+they appear as cells below the curve.  A common example of this are
+cells having (or contaminated with) hemoglobin-related transcripts.
+
+```{r features-vs-counts, fig.cap="*Genes versus transcripts, with data points colored by hemoglobin percentage. Red lines correspond to `CFG$min_txpts` and `CFG$max_txpts`. The maximum of the color scale is either 5% or the 99nth percentile of the percentage hemoglobin, whichever is larger. Densities for data on both axes are shown as well.*"}
+
+hb_counts <- Matrix::colSums(srat@assays$RNA@counts[ genelists$hemo, ,drop=FALSE])
+
+srat <- AddMetaData(srat,
+                    col.name = "log2hb_genes",
+                    metadata=log2(1+hb_counts))
+
+srat <- AddMetaData(srat,
+                    col.name = "pct_hemo",
+                    metadata=100*hb_counts/srat@meta.data$nCount_RNA )
+
+df <- srat@meta.data
+df <- df[order(df$pct_hemo), ]  # this is so high-hemo is plotted _over_ low.
+
+end_scale <- max(5, quantile(df$pct_hemo,probs=c(0, 0.99)))
+
+h <- ggplot(df, aes(x=log2_counts, y=log2_features, color=pct_hemo))
+
+h <- h + geom_point(size=1.5, alpha=1) +
+  scale_color_gradient(low="LightBlue", high="red",
+                       limits=c(0, end_scale),
+                       oob=scales::squish) +
+  geom_vline(xintercept=log2(with(CFG, c(min_txpts, max_txpts))), 
+             col='red', linetype=2, lwd=0.5) + theme_bw()
+show(h)
+
+autoana::maybe_dump('unnormalized_dump', srat)
+```
+
+# Droplet selection
+
+<!--  Note to developers: in the code below I don't use CFG$min_txpts etc. 
+because knitr/kableExtra/HTML gets confused by the dollar signs. Hence the
+use of the nested with(CFG,with(srat@meta.data, ... )) construct.
+--->
+
+Based on the criteria specified in the configuration we proceed with
+selecting the droplets that are deemed to contain true cells or nuclei.
+
+```{r cells-overview}
+
+DefaultAssay(srat) <- 'RNA'
+
+expressed <- names(which(Matrix::rowSums(GetAssayData(srat)) >=  CFG$min_features))
+
+ngenes_before <- nrow(srat) # should be == length(expressed)
+ncells_before <- ncol(srat)
+
+#shorthand for readability:
+d <- function(what, limit, value)data.frame(what=what,limit=limit,value=value)
+
+df <- with(CFG,
+        with(srat@meta.data,
+          rbind(
+             d("genes expressed in >= min_cells cells", min_cells, ngenes_before),
+             d("droplets BEFORE filtering", NA, ncells_before),
+             d("droplets with < min_txpts", min_txpts , sum(nCount_RNA < min_txpts)),
+             d("droplets with > max_txpts" , max_txpts, sum(nCount_RNA > max_txpts)),
+             d("droplets with pct_mito > max_pct_mito", max_pct_mito,
+                     sum(pct_mito > max_pct_mito)),
+             d("droplets with pct_hemo > max_pct_hemo", max_pct_hemo,
+                    sum(pct_hemo > max_pct_hemo)))))
+
+srat <- subset(srat, features=expressed, 
+    subset = 
+        nCount_RNA > CFG$min_txpts & 
+        nCount_RNA < CFG$max_txpts  &
+        pct_mito < CFG$max_pct_mito &
+        pct_hemo < CFG$max_pct_hemo)
+gc()
+
+df <-rbind(df,
+           d("droplets AFTER filtering", NA, ncol(srat)))
+
+pct <- formatC(100*df$value/ncells_before, format="f", digits=1)
+pct[1] <- '--'
+df$pct <- pct
+
+df$limit <- formatC(df$limit, format = "d", big.mark = ",", preserve.width = 'common')
+df$value <- formatC(df$value, format = "d", big.mark = ",", preserve.width = 'common')
+
+df[grep("NA",df$limit), 'limit'] <- '--'
+df[grep("NA", df$value), 'value'] <- '--'
+
+kbl(df, align='rrr',
+    caption="*Overview of the droplet selection statistics.*") %>% 
+    kable_styling(bootstrap_options = c("striped", "hover"))
+
+## we may have lost some genes, so adjust the genelists again:
+genelists <- lapply(genelists, function(l)intersect(l, rownames(srat)))
+
+rm(d)
+
+```
+
+# Normalization
+
+We now perform normalization, both using the `LogNormalize` and the `SCTransform` 
+method. `LogNormalize` corresponds to the `RNA` assay and is used when looking at
+individual genes, e.g. when finding differentially expressed genes. In contrast,
+SCTransform, corresponding to the `SCT` assay, is used when considering the expression
+of all genes as a whole, typically during dimensional reduction and clustering.
+
+```{r normalization}
+srat <- autoana::cache({
+        srat <- NormalizeData(srat, normalization.method = "LogNormalize")
+        gc()
+        srat <- ScaleData(srat, features = rownames(srat), verbose = FALSE)
+        gc()
+        srat <- FindVariableFeatures(srat)
+        }, file="lognorm.rds")
+gc()
+
+srat <- autoana::cache({ 
+        SCTransform(srat, vst.flavor='v2',
+                          vars.to.regres = NULL, verbose = FALSE )
+        },file="sctransform.rds")
+gc()
+
+### SCT throws out genes it cannot model, so to avoid indexing errors it's
+### best to again remove them from the genelists:
+genelists <- lapply(genelists, function(l)intersect(l, rownames(srat)))
+
+autoana::maybe_dump('normalized_dump', srat)
+```
+
+## PCA
+
+An essential step in the dimensional reduction is principal component
+analysis.  It is meant to remove some of the noise that is inherent the
+data, while at the same time offering an impression of the global
+structure of the data.  The PCA plots should show some clear 'structure'
+such as a few 'branches' or clusters. If the PCA looks like a big blob,
+something is wrong with the data, and further analysis steps will likely
+not be succesful.
+
+```{r pca, fig.cap="*The first two principal components, colored by number of transcripts, number of expressed genes, percentage mitochondrial transcripts, and percentage hemoglobin-gene transcripts.*"}
+
+DefaultAssay(srat) <- 'SCT'
+
+srat <- autoana::cache({
+        RunPCA(srat, verbose = FALSE, npcs = CFG$ndims_show)
+        }, file='pca.rds')
+gc()
+
+## since we will be running the very same plots again, it is wrapped in
+## a very simple function that we call again after deconfounding:
+pca_figure <- function() {
+  to_show <- c('nCount_RNA','nFeature_RNA','pct_mito','pct_hemo')
+  FeaturePlot(srat, pt.size = CFG$pt_size,
+    reduction='pca', features=to_show, ncol=2, order=TRUE) &
+      scale_colour_gradientn(colours = CFG$gradient_colors)
+}
+
+pca_figure()
+```
+                                  
+## Information per PC
+
+```{r sd-per-PC, fig.cap="*Elbow plot of the standard deviation per principal component of the first few principal components. For the purpose of dimensional reduction, (i.e. UMAP and clustering), the PCs to the left of the red line are retained.*"}
+
+ElbowPlot(srat, reduction="pca", ndims=CFG$ndims_show) + 
+    geom_vline(xintercept=CFG$ndims+0.5, col='red', lwd=0.5)
+
+### NOTE: The Seurat `ElbowPlot` shows the standard deviation per PC,
+### in contrast to a conventional PCA scree-plot which shows the *variance*
+### relative to the total variance. To get the variances, see
+### https://github.com/satijalab/seurat/issues/982#issuecomment-478899447.
+```
+
+<!--  show SCutils::loadings.MAD.plot(srat)  too? -->
+
+# UMAPs before deconfounding
+
+## Txpt counts, pct mito and hemo
+
+Below are shown the UMAPs colored by number of transcripts, number of
+genes expressed, percentage mitochondrial and percentage
+hemoglobin-genes. None of these factors should show a large influence,
+i.e. they should not appear to be the cause of the clustering. We will
+remove their influence in a moment.
+
+```{r umap, fig.cap="*UMAPs (before deconfounding) colored by number of transcripts, number of genes expressed, percentage mitochondrial and percentage hemoglobin-genes.*"}
+
+DefaultAssay(srat) <- 'SCT'
+srat <- autoana::cache({
+        RunUMAP(srat, dims=1:CFG$ndims,  
+                n.neighbors = CFG$nngbs,
+                verbose=FALSE, 
+                return.model=TRUE)
+        }, file='umap.rds')
+gc()
+
+## since we will be running the very same plots again, it is wrapped in
+## a very simple function that we call again after deconfounding:
+umap_figure <- function() {
+##   c('nCount_RNA','nFeature_RNA','pct_mito','pct_hemo')
+  top <- FeaturePlot(srat, features=c('nCount_RNA','nFeature_RNA'), 
+         pt.size = CFG$pt_size,
+         reduction='umap', ncol=2, order=TRUE) &
+         scale_colour_gradientn(colours = CFG$gradient_colors)
+  
+  m <- FeaturePlot(srat, features='pct_mito',
+         pt.size = CFG$pt_size,
+         reduction='umap', order=TRUE) &
+         scale_colour_gradientn(colours = CFG$gradient_colors)
+
+## hemo needs different color and scale:
+  end_scale <- max(5, quantile(srat@meta.data$pct_hemo,probs=c(0, 0.99)))
+
+  h <- FeaturePlot(srat, features='pct_hemo',
+         pt.size = CFG$pt_size,
+         reduction='umap', order=TRUE) &
+         scale_color_gradient(low="LightBlue", high="red",
+                       limits=c(0, end_scale),
+                       oob=scales::squish)
+
+  show( top / ( m | h ) )
+}
+
+umap_figure()
+```
+
+
+## Cell cycle
+
+The cellcycle phase can be a confounder in some cases. The figures below
+may help you decide if this is the case. The estimated cellcycle phase
+is based on the so-called module score of canonical cell cycle specific
+genes. This module score (representing the 'average expression a list of
+genes') is also used for other confounders like ribosomal protein genes
+and stress-related genes.
+
+```{r cellcycle, fig.cap="*UMAPs (before deconfounding) colored by G2M score, S.Score, estimated cell cycle phase and number of transcripts.*"}
+
+DefaultAssay(srat) <- 'RNA'
+srat<- CellCycleScoring(object = srat,
+                        s.features =   genelists$s.genes,
+                        g2m.features = genelists$g2m.genes)
+
+srat <- SCutils::saneAddModuleScore(srat, genelists, empty=0.0)
+                                    
+cellcycle_figure <- function() {
+
+  s <- FeaturePlot(srat, pt.size = CFG$pt_size,
+                   reduction = "umap", 
+                   features=c('G2M.Score','S.Score'), order=TRUE) *
+                     scale_colour_gradientn(colours = CFG$gradient_colors)
+  
+  p <- DimPlot(srat,
+               pt.size = CFG$pt_size/2,
+               reduction = "umap",  group.by='Phase')
+
+  f <- FeaturePlot(srat, 
+                   pt.size = CFG$pt_size/2,
+                   reduction = "umap", 
+                   features='nFeature_RNA', order=TRUE)  *
+                     scale_colour_gradientn(colours = CFG$gradient_colors)
+  s / ( p | f )
+
+}
+
+cellcycle_figure()
+```
+
+## Additional cell-cycle genes
+
+There are often additional genes whose expression correlates with the
+expression of the well-known cellcycle genes. By excluding these
+additional genes too you can minimize the influence of the cell cycle
+even further.
+
+```{r derived-cellcycle, fig.cap="*Correlation with the cell-cycle. The scatterplot shows the correlation (over all cells) of each gene against the S- and G2M-scores per cell. Their distributions are shown as boxplots along the corresponding axes, for respectively: all genes; the genes NOT part of the phase-specific group; and those that are. The first quartile of the latter serves as a cutoff and is shown by red (S-score) and blue (G2M-score) lines. Genes having a higher correlation than these cutoffs are marked as additional cell cycle genes (circled), and will removed from the list of variable features. (The exception to this are the genes lying between the diagonal lines which correlating strongly to both S and G2M score as they are not cellcycle-phase specific)*"}
+
+DefaultAssay(srat) <- 'RNA'
+Scor <- autoana::cache({
+        SCutils::metadataCorrelations(srat, 'S.Score')
+        }, file="scor.rds")
+gc()
+
+G2Mcor <- autoana::cache({
+          SCutils::metadataCorrelations(srat, 'G2M.Score')
+          },file="g2mcor.rds")
+gc()
+
+derived <- SCutils::derivedCellcycleGenes(Scor=Scor, title="",
+                                          Sgenes=genelists$s.genes,
+                                          G2Mcor=G2Mcor,
+                                          G2Mgenes=genelists$g2m.genes)
+
+genelists <- c(genelists, derived[ c("S.derived", "G2M.derived")])
+
+srat <- SCutils::saneAddModuleScore(srat, genelists, empty=0.0)
+
+## If you maintain a separate set of genelists for the SCT assay (see above),
+## also adjust those genelists accordingly.
+
+show(derived$plot)                      # scatter plot of correlations against G2M and S
+
+```
+
+
+## Sex-specific expression
+
+There may be influence of the sex of the samples, and sometimes (e.g. in
+the case of mouse embryos) you may not know the sex. The plots
+below help establish or confirm the sex and their influence.
+
+```{r sex, fig.cap="*Top row: UMAPs of cells colored by female and male  expressed as log2(1+sum(sex-specific transcripts)) Bottom row: male versus female expression, left: expressed as log2(1+sum(sex-specific transcripts)); right: expressed as a Seurat module score.*"}
+
+
+male_exp <- ! ( is.null(genelists$male) || length(genelists$male) == 0 )
+female_exp <- ! ( is.null(genelists$female) || length(genelists$female) == 0 )
+
+if(female_exp) {
+  f <- Matrix::colSums(GetAssayData(srat,assay='RNA')[genelists$female, , drop=FALSE])
+} else {
+  f <- rep(0, ncol(srat))
+  names(f) <- colnames(srat)
+}
+
+if( male_exp) { 
+  m <- Matrix::colSums(GetAssayData(srat, assay='RNA')[genelists$male, , drop=FALSE])
+} else  {
+  m <- rep(0, ncol(srat))
+  names(m) <- colnames(srat)
+}
+
+srat <- AddMetaData(srat, 
+           metadata = log2(1+f), col.name = "log2F")
+
+srat <- AddMetaData(srat, 
+           metadata = log2(1+m), col.name = "log2M")
+
+rm(f,m)
+
+.scatter.with.margdens <- function(srat, title, x,y, ratio=8) { 
+
+  main <- FeatureScatter(srat, x, y, 
+            cols=CFG$default_color) +
+            ggtitle(NULL) + NoLegend()
+
+  densx <- ggplot(srat@meta.data, aes(.data[[x]])) + 
+             ggtitle(title) + 
+             geom_density() + 
+             theme_void() +
+             theme(legend.position="none",
+                    plot.title = element_text(hjust = 0.5, 
+                                              face="bold", 
+                                              size=15))
+
+  densy <- ggplot(srat@meta.data, aes(.data[[y]])) + 
+             geom_density() + 
+             theme_void() +
+             theme(legend.position="none") + 
+             coord_flip() 
+
+  s <- densx + plot_spacer() + 
+         main  + densy + 
+         plot_layout(ncol = 2, nrow = 2, 
+                     widths = c(ratio, 1), 
+                     heights = c(1, ratio))
+  s
+} # .scatter.with.margdens
+
+sex_figure <- function() {
+  m <- FeaturePlot(srat, 
+                   reduction = "umap", 
+                   features='log2M', 
+                   order=TRUE, 
+                   pt.size=CFG$pt_size/2) + 
+         scale_colour_gradientn(colours = CFG$gradient_colors) + 
+         ggtitle("log2M")
+
+  f <- FeaturePlot(srat, 
+                   reduction = "umap", 
+                   features='log2F', 
+                   order=TRUE,
+                   pt.size= CFG$pt_size/2 ) + 
+         scale_colour_gradientn(colours = CFG$gradient_colors) +
+         ggtitle("log2F")
+
+  s <- .scatter.with.margdens(srat, 
+                              title="Sum of sex-specific txpts", 
+                              x='log2F',y='log2M')
+
+  mod <- .scatter.with.margdens(srat, 
+                                title="module scores", 
+                                x='female', y='male', ratio=6)
+
+  show( ( f | m ) / (  s | mod ) )
+}
+
+sex_figure()
+
+```
+
+## Other confounders
+
+Lastly, factors such as the (log) number of transcripts and genes, the
+amount of ribosomal expression and stress (as evidenced by expression of
+genes related to the Unfolded Protein Response) can be informative and
+may unduly influence the UMAP.
+
+```{r other-confounders, fig.cap="*UMAPs (before deconfounding) of log(transcripts), log(genes) and module score for ribosomal protein genes and stress-related genes.*"}
+
+other_confounders_figure <- function() { 
+
+to_show <- c("log2_counts",
+             "log2_features",
+            "ribo",
+            "stress"
+            )
+
+FeaturePlot(srat, reduction='umap',
+            features=to_show, ncol=2,
+            order=TRUE) &
+  scale_colour_gradientn(colours = CFG$gradient_colors)
+}
+other_confounders_figure()
+```
+
+# UMAPs after deconfounding
+
+To get rid of *all* potential deconfounders, we remove all of
+`CFG$confounder_genelists`(namely 
+`r paste(collapse=", ",CFG$confounder_genelists)`) 
+from the list of variable genes. That way
+they don't shape the UMAP layout nor the clustering later on.
+
+```{r deconfounding}
+to_remove <- Reduce(union, genelists[ CFG$confounder_genelists  ] )
+removed <-NULL
+
+removed <- intersect(VariableFeatures(srat, assay='SCT'), to_remove)
+VariableFeatures(srat, assay='SCT') <- 
+   setdiff( VariableFeatures(srat, assay='SCT'), removed)
+
+## now redo both PCA and UMAP
+DefaultAssay(srat) <- 'SCT'
+srat <- autoana::cache({
+        RunPCA(srat, assay='SCT', 
+               features = VariableFeatures(srat), npcs = CFG$ndims)
+        },file="pca2.rds")
+gc()
+
+srat <- autoana::cache({
+        RunUMAP(srat, assay='SCT', 
+                dims=1:CFG$ndims, 
+                n.neighbors = CFG$nngbs,
+                return.model=TRUE)
+        },file="umap2.rds")
+gc()
+autoana::maybe_dump('deconfounded_dump', srat)
+```
+
+A total of `r length(to_remove)` genes were removed from the list of
+variable genes. Subsequently, PCA and UMAP were rerun. The plots that
+were shown for the undeconfounded data is now shown again.
+
+## Txpt counts, pct mito and hemo (2)
+<!-- note to maintainer: copy paste the captions from the analogous previous figures -->
+```{r umap-deconfounded, fig.cap="*UMAPs (after deconfounding) colored by number of transcripts, number of gens expressed, percentage mitochondrial and percentage hemoglobin-genes.*"}
+
+umap_figure()
+```
+
+## Cell cycle (2)
+```{r cellcycle-deconfounded, fig.cap="*UMAPs (after deconfounding) colored by G2M score, S.Score, estimated cell cycle phase and number of transcripts.*"}
+
+cellcycle_figure()
+```
+
+<!-- 
+  -- ## Sex (2) NO, ignore
+  -- ```{r sex-deconfounded, fig.cap="*Top row: UMAPs (after deconfounding) of cells colored by female and male  expressed as log2(1+sum(sex-specific transcripts)) Bottom row: male versus female expression, left: expressed as log2(1+sum(sex-specific transcripts)); right: expressed as a Seurat module score.*"}
+  -- sex_figure()
+  -- ```
+  -->
+
+
+## Other confounders (2)
+```{r other-confounders-deconfounded, fig.cap="*UMAPs (after deconfounding) of log(transcripts), log(genes) and module score for ribosomal protein genes and stress-related genes.*"}
+
+other_confounders_figure()
+
+```
+
+# Clustering
+
+Although the UMAPs show visual clusters, the cells have actually not
+been formally clustered which is needed for the subsequent cell type
+identification stager.  The deconfounded data is clustered using
+`CFG$resolution`(= `r CFG$resolution`) as the resolution.
+
+(If a `clustersfiles` argument was used, the clusters were loaded
+from it, rather than being determined automatically). 
+
+```{r clustering, fig.cap="*UMAP showing cluster identities.*"}
+
+srat <- FindNeighbors(srat)
+
+srat <- FindClusters(srat, reduction='umap', resolution = CFG$resolution)
+
+## By default Seurat names the clusters consecutively by decreasing size. It is
+## often more convenient if similar clusters are named consecutively:
+srat <- BuildClusterTree(srat, reorder = TRUE, reorder.numeric = TRUE)
+
+clus_column <- 'tree.ident'
+
+.format_clusterids <-
+   function(ids)paste0("c",SCutils::sortable_integer_strings(ids))
+
+if ( is.null(clusterids) ) { 
+  clusterids <-  .format_clusterids( srat@meta.data[[ clus_column ]] )
+} else { 
+  clus <- rep('other', ncol(srat))
+  names(clus) <- colnames(srat)
+  use <- intersect( names(clusterids), colnames(srat) )
+  clusterids <- clusterids[ use ] # subset
+}
+
+srat@meta.data[[clus_column]] <- clusterids 
+Idents(srat) <- clus_column
+
+clusterids <- sort(unique(clusterids))
+
+expect_character(clusterids, min.len=3, max.len=36, 
+  info="Current code only allows for 36 different colors, so number of clusters is limited to 36. To fix, lower CFG$resolution")
+
+colors <- Polychrome::palette36.colors(length(clusterids))
+names(colors) <- clusterids
+
+clusters_umap <- DimPlot(srat, reduction = "umap",
+                         pt.size = CFG$pt_size,
+                         group.by = clus_column, 
+                         cols=colors,
+                         label=(clustersfile==""), # labels look ugly
+                         repel=TRUE,
+                         label.box=TRUE,
+                         label.size=4) + ggtitle("")
+show(clusters_umap)
+```
+
+The numbers of cells per population are as follows:
+
+```{r clustering-counts, include=TRUE}
+
+cnts <- table(srat@meta.data[[clus_column]]); class(cnts)<-NULL
+cnts_pct <- round(100*(cnts)/sum(cnts), digits=1)
+
+df <- data.frame(cluster=names(cnts), 
+                 ncells=unname(cnts), pct=unname(cnts_pct))
+
+df <- df[order(df$ncells, decreasing=TRUE), ]
+
+kbl(df,
+    caption="*Table with numbers of cells per cluster.*") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+# Cell typing
+
+Automated celltyping is now done using SingleR. Be aware that the
+celltype assignments are only a rough first attempt, and that SingleR
+can only assign types represented in the reference (here:
+`r paste0(CFG$celltyping_dataset, ", subset ", CFG$celltyping_subset)`),
+usually excluding tumor cells.
+
+```{r celltyping, fig.cap="*Heatmap of SingleR celltype-scores; rows are celltypes, columns are cells. Cluster colors are as in the cluster plot.*"}
+
+refdata <- CFG$celltyping_dataset
+celltyping <- !is.na(refdata) && is.character(refdata) && refdata != ""
+if( celltyping ) {
+  
+  #refdata <- (get(refdata))() # note: this is the name of a function, which is being called here. This mechanism is depracated.
+  load(HumanPrimaryCellAtlas)  # loads human primary cell atlas as 'refdata'
+    
+  snglr <- autoana::cache({
+           SingleR::SingleR(test = GetAssayData(srat, assay = "RNA", slot = "data"),
+                            ref = refdata, 
+                            labels = refdata[[ CFG$celltyping_subset ]])
+           }, file='snglr.rds')
+
+  expect_identical( snglr@rownames, colnames(srat)  )
+  expect_false(is.null(snglr$labels))
+
+  srat@meta.data$celltype <- snglr$labels
+
+  ## -- at this point we could merge celltypes if desired -- 
+
+  SingleR::plotScoreHeatmap(snglr,
+                            show.labels = TRUE, 
+                            max.labels=100,
+                            show.pruned = FALSE,
+                            order.by="clusters",
+                            clusters = srat@meta.data[[clus_column]], 
+                            annotation_colors = list(Clusters=colors))
+  
+  autoana::maybe_dump("singler_dump", snglr)
+} else { 
+  cat("Celltyping skipped based on config\n")
+}
+```
+
+<!-- put gc in own block so it won't show -->
+```{r gc2, include=FALSE}
+gc()
+```
+
+## Cell type counts
+
+The numbers of cells per cell type are as follows. For brevity, only the
+top `CFG$celltyping_topn`(=`r CFG$celltyping_topn`) most abundant cell
+types are shown. Note that the celltypes are simply SingleR's "best hit
+per column" which is also shown in the "Labels"-bar on top of the
+heatmap. The cluster information is ignored.
+
+
+```{r celltyping-counts}
+
+if( celltyping ) {
+  
+  cnts <- table(srat@meta.data$celltype); class(cnts)<-NULL
+  cnts <- sort(cnts, decr=TRUE)
+  cnts_pct <- round(100*(cnts)/sum(cnts), digits=1)
+  df <- data.frame(cluster=names(cnts), 
+                   ncells=unname(cnts), 
+                   pct=unname(cnts_pct))[ (1:min(length(cnts), CFG$celltyping_topn )), ]
+  
+  kbl(df, 
+      caption=sprintf("*Top `CFG$celltyping_topn` (%d) most abundant cell types.*",CFG$celltyping_topn)) %>% 
+      kable_styling(bootstrap_options = c("striped", "hover"))
+
+}
+```
+
+
+## Composition per cluster
+
+The composition of cell types, now per cluster, is shown below.  The
+celltypes with an abundance below 
+`CFG$celltyping_ignore_pct` (`r CFG$celltyping_ignore_pct`%)
+per cluster are not shown. (To see the UMAP
+with the cluster names <a href="#Clustering">see Clustering</a>).
+
+```{r cluster-composition, fig.cap=sprintf("*Barplot showing the celltype-composition per cluster. Cells of celltype making up less  than `CFG$celltyping_ignore_pct` (%d%%) in any cluster are igored.*", CFG$celltyping_ignore_pct)}
+
+total_ignored <- NA # will be overwritten unless celltyping switched off
+to_ignore <- c()
+
+if( celltyping ) {
+  
+  clusid <- srat@meta.data[[clus_column]]
+  celltype <- srat@meta.data$celltype
+
+  tibble(clusid, celltype) %>%
+    group_by(clusid, celltype) %>%
+    summarise(n = n()) %>%
+    mutate(freq = n/sum(n)) ->
+    cluster_comp
+  ### grouping is implicitly done by the first column !?!
+
+  ## for use later, add the cluster-wise stats to the metadata:
+  m <- srat@meta.data
+  m$id <- rownames(m) # needed to sort by
+  x <- merge(m, cluster_comp, 
+             by.x=c(clus_column, 'celltype'), 
+             by.y=c('clusid', 'celltype'))
+  rownames(x) <- x$id
+  x <- x[ rownames(m), ]
+  srat@meta.data$cluster_size = x$n
+  srat@meta.data$cluster_freq = x$freq
+  rm(x,m)
+
+  ## find out which celltypes are below CFG$celltyping_ignore_pct in _all_ clusters
+  limit <- CFG$celltyping_ignore_pct/100
+  low <-  unique(subset(cluster_comp, freq <  limit) %>% pull('celltype'))
+  high <- unique(subset(cluster_comp, freq >= limit) %>% pull('celltype'))
+  to_ignore <- setdiff(low, high)
+  
+  ## add a simplified type to the meta data:
+  srat@meta.data <-
+    mutate(srat@meta.data,
+           celltype_ignored =
+             ifelse( celltype %in% to_ignore,
+                    'ignored', 
+                     celltype))
+  
+  total_ignored <- sum(srat@meta.data$celltype_ignored == 'ignored')
+  
+  ## base colors on this:
+  cnts <- table(srat@meta.data$celltype_ignored); class(cnts)<-NULL
+  cnts <- sort(cnts, decr=TRUE)
+
+  at_end <- c('ignored')
+  known_types <- setdiff(names(cnts), at_end )
+  cnts <- c(cnts[known_types], cnts[ at_end ])
+  
+  types <- names(cnts)
+  type_colors <- Polychrome::light.colors(length(known_types))
+  names(type_colors) <- known_types
+  type_colors <- c(type_colors,
+                   ignored=CFG$type_ignored_color)
+  
+  cluster_comp_filt <- cluster_comp[!(cluster_comp$freq < limit ), ]
+  
+  color_scale <- scale_colour_manual(name="celltype", values=type_colors, 
+     aesthetics=c("colour", "fill"),drop=TRUE)
+
+  barplot <-  ggplot(data = cluster_comp_filt,
+         aes(x = reorder(clusid, as.integer(gsub("^[a-zA-Z]","",clusid))),
+             y = freq, fill = celltype)) +
+    color_scale +
+    geom_bar(stat = 'identity', position = 'dodge', alpha = 2/3) +
+    scale_y_continuous(labels = scales::percent ) + 
+    labs(x = 'cluster', y = "composition",fill=celltype) + ggtitle("") +
+    theme_bw()
+    
+  ## show(clusters_umap / barplot) # too squeezed
+  show(barplot)
+}
+```
+
+A total of `r total_ignored` cells were ignored because their abundance
+was below `CFG$celltyping_ignore_pct`(=`r CFG$celltyping_ignore_pct`)
+percent in any cluster. It concerned cells of the following type(s):
+`r paste(collapse=", ", to_ignore)`.
+
+## Cell types in UMAP
+
+Showing the above celltyping in the UMAP we obtain the following:
+
+```{r celltype-in-UMAP, fig.cap="*UMAP with SingleR celltypes (indicative only).*"}
+
+if( celltyping ) {
+  
+  Idents(srat) <- srat@meta.data$celltype_ignored # needed for plotting
+  
+  p = DimPlot(srat, reduction = "umap",
+              pt.size = CFG$pt_size,
+              group.by = "celltype_ignored",
+              cols=type_colors, 
+              order=known_types) + ggtitle("")
+  show(p)
+
+}
+```
+
+```{r dump}
+autoana::maybe_dump('final_dump', srat)
+autoana::maybe_dump('metafinal_dump', srat@meta.data) # for convenience
+```
+
+# Session Info
+
+To see all the version of all the packages that were used in this report, click on the 
+`Code` button.
+
+```{r session}
+sessionInfo()
+```
+
+------------------------------------------------------------------------
+
+<!-- If there are any footnotes it's useful to include a little header
+  -- for them like so:
+
+**Footnotes:**
+
+  -- (i.e. get rid of these comments
+  --> 
+
