@@ -35,10 +35,10 @@ of centromeric regions. A mutation matrix is constructed, which is refitted to d
 Absolute and relative contributions, including bootstrap values, are calculated and visualized. The code consists     
 of additional analyses to also explore subclonal and pentanucleotide mutational patterns.    
 
-Furthermore, comparisons of APOBEC mutagenesis in WGS data to expression patterns in RNAseq data are performed.     
-In specific, correlation analyses are performed to compare the number of SBS2 and SBS13 mutations vs the    
-expression of *APOBEC3A* and *APOBEC3B* and the percentage of RNA editing in *DDOST* in each sample. Refer to    
-chapter **RNAseq data analyses** to prepare input files for these comparisons.   
+Furthermore, comparisons of APOBEC mutagenesis in WGS data to expression patterns in RNAseq data are     
+performed. In specific, correlation analyses are performed to compare the number of SBS2 and SBS13    
+mutations vs the expression of *APOBEC3A* and *APOBEC3B* and the percentage of RNA editing in *DDOST*   
+in each sample. Refer to chapter **RNAseq data analyses** to prepare input files for these comparisons.   
 
 ### Script generateAnnotateCNVsegmentsJobs.sh
 
