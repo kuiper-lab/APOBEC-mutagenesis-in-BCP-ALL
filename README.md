@@ -34,9 +34,10 @@ Variants are filtered on read depth, variant allele frequency, population freque
 of centromeric regions. A mutation matrix is constructed, which is refitted to diagnosis-related COSMIC signatures.    
 Absolute and relative contributions, including bootstrap values, are calculated and visualized.   
 
-The code consists of additional analyses to explore subclonal and pentanucleotide mutational patterns. Furthermore,    
-correlation analyses to RNAseq data are performed to compare the number of SBS2 and SBS13 mutations vs the   
-percentage of RNA editing in *DDOST* and the expression of *APOBEC3A* and *APOBEC3B* in each sample.
+The code consists of additional analyses to explore subclonal and pentanucleotide mutational patterns.    
+Furthermore, correlation analyses to RNAseq data are performed to compare the number of SBS2 and SBS13    
+mutations vs the percentage of RNA editing in *DDOST* and the expression of *APOBEC3A* and *APOBEC3B*    
+in each sample.
 
 ### Script generateAnnotateCNVsegmentsJobs.sh
 
@@ -69,7 +70,8 @@ analysed. Count files produced by Rsubread are required as input, as well as the
 samples and the SBS2 and SBS13 status in *ETV6::RUNX1*-positive samples.   
 
 The approach of Li *et al.* (2025) is followed to explore additional expression differences between    
-*ETV6::RUNX1*-positive samples with and without APOBEC-mutagenesis, refer to: <https://doi.org/10.1038/s41467-025-56229-7>.
+*ETV6::RUNX1*-positive samples with and without APOBEC-mutagenesis, refer to:    
+<https://doi.org/10.1038/s41467-025-56229-7>.
 
 ### Script generateBamReadcountJobs.sh
 
