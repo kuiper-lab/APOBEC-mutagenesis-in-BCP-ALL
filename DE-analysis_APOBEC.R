@@ -33,7 +33,7 @@ setwd(RESULTS_DIR)
 
 # Define name of count matrix (will be created if CREATE_COUNT_MATRIX == TRUE)
 CREATE_COUNT_MATRIX <- FALSE
-RNASEQ_COUNT_MAT <- "count_data_ALLsamples_PMC_duplicatesAndIsoformsMerged.Rda"
+RNASEQ_COUNT_MAT <- "/Users/m.m.kleisman/Projects/leukemiaRnaSeq/RESULTS/DE_analysis/count_data_ALLsamples_PMC_duplicatesAndIsoformsMerged.Rda"
 
 # Define extension of RNAseq count files (only required if CREATE_COUNT_MATRIX == TRUE)
 COUNT_EXT <- "_RNA-Seq.gene_id.exon.counts.txt"
@@ -403,8 +403,8 @@ openxlsx::write.xlsx(deg_df[,1:4], file = "DEGs-ETV6RUNX1samples_121125.xlsx")
 volcano_df <- as.data.frame(DE_result) %>%
   mutate(gene = rownames(DE_result),
          log_pval = -log10(padj), 
-         significance = case_when(padj < 0.05 & log2FoldChange >= 0.5 ~ "Upregulated",
-                                  padj < 0.05 & log2FoldChange <= -0.5 ~ "Downregulated",
+         significance = case_when(padj < 0.05 & log2FoldChange >= 1 ~ "Upregulated",
+                                  padj < 0.05 & log2FoldChange <= -1 ~ "Downregulated",
                                   TRUE ~ "Not significant"))
 top_genes <- volcano_df %>% filter((padj < 0.001 & abs(log2FoldChange) > 2) | 
                                      abs(log2FoldChange) > 5)
@@ -418,6 +418,7 @@ volcano_plot <- ggplot(volcano_df, aes(x = log2FoldChange, y = log_pval, color =
   labs(title = "Volcano plot, bulk RNAseq data", x = "Log2 fold change",
        y = "-Log10 adjusted p-value", color = "Significance") +
   theme_classic() +
+  scale_x_continuous(breaks = seq(-6, 6, 2)) +
   geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
   geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black") +
   theme(plot.title = element_text(face = "bold"),
